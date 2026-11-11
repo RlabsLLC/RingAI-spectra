@@ -13,6 +13,7 @@ from flask import Flask, request, jsonify, render_template_string, send_file
 # Global State & Queues
 # ---------------------------------------------------------------------------
 app = Flask(__name__)
+app.config['MAX_CONTENT_LENGTH'] = 5 * 1024 * 1024 * 1024 # Allow up to 5GB batch uploads
 
 # Producer-Consumer queues
 # stream_queue holds URLs to be downloaded.
@@ -683,27 +684,36 @@ def add_stream():
 @app.route('/api/upload_audio', methods=['POST'])
 def upload_audio():
     """Handles bulk folder uploads from the user's local machine."""
-    if 'files' not in request.files:
-        return jsonify({"status": "error", "message": "No files part"}), 400
-    
     files = request.files.getlist('files')
+    if not files:
+        return jsonify({"status": "error", "message": "No files received"}), 400
+    
     if not os.path.exists('downloads'):
         os.makedirs('downloads')
         
     saved_count = 0
     for file in files:
         if file.filename:
-            # Flatten folder structure, just keep filename
-            filename = os.path.basename(file.filename) 
-            filepath = os.path.join('downloads', filename)
-            file.save(filepath)
-            
-            # Add to training queue immediately
-            training_queue.put(filepath)
-            saved_count += 1
+            try:
+                # Sanitize paths in case the browser sends full folder structures (Windows or Mac)
+                clean_name = file.filename.replace('\\', '/').split('/')[-1]
+                
+                # Ensure filename is safe and won't cause OS errors
+                safe_name = "".join(c for c in clean_name if c.isalnum() or c in " ._-").strip()
+                if not safe_name:
+                    safe_name = f"audio_{int(time.time())}_{saved_count}.wav"
+                    
+                filepath = os.path.join('downloads', safe_name)
+                file.save(filepath)
+                
+                # Add to training queue immediately
+                training_queue.put(filepath)
+                saved_count += 1
+            except Exception as e:
+                log_msg(f"Failed to save {file.filename}: {str(e)}")
             
     state["files_ready"] = training_queue.qsize()
-    log_msg(f"Successfully uploaded and queued {saved_count} audio files from local folder.")
+    log_msg(f"Successfully uploaded and queued {saved_count} audio files from local machine.")
     
     return jsonify({"status": "success", "count": saved_count})
 
