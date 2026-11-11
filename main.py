@@ -493,10 +493,16 @@ HTML_TEMPLATE = """
                 <h3 class="text-xl font-semibold mb-2">Generate Clean Audio</h3>
                 <p class="text-sm text-gray-400 mb-8 max-w-md mx-auto">Run a forward pass through your currently trained weights to produce a sample output.</p>
                 
-                <button id="btn-run-infer" onclick="runInference()" class="w-full max-w-xs mx-auto bg-blue-600 hover:bg-blue-500 py-3 rounded-lg font-bold transition flex justify-center items-center">
-                    <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
-                    Run Inference Pass
-                </button>
+                <div class="flex flex-col sm:flex-row space-y-3 sm:space-y-0 sm:space-x-4 justify-center max-w-md mx-auto">
+                    <button id="btn-run-infer-short" onclick="runInference('short')" class="flex-1 bg-blue-600 hover:bg-blue-500 py-3 rounded-lg font-bold transition flex justify-center items-center">
+                        <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                        Test Pass (3s)
+                    </button>
+                    <button id="btn-run-infer-full" onclick="runInference('full')" class="flex-1 bg-purple-600 hover:bg-purple-500 py-3 rounded-lg font-bold transition flex justify-center items-center">
+                        <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3"></path></svg>
+                        Full Track (10s)
+                    </button>
+                </div>
                 
                 <div id="audio-player-container" class="hidden mt-8 pt-6 border-t border-gray-800">
                     <p class="text-xs text-gray-400 uppercase tracking-wider mb-3 text-left">Output Result</p>
@@ -663,35 +669,48 @@ HTML_TEMPLATE = """
             window.location.href = '/api/download_weights';
         }
 
-        // Run Inference (Fixed duplicate)
-        function runInference() {
-            const btn = document.getElementById('btn-run-infer');
+        // Run Inference
+        function runInference(type = 'short') {
+            const isFull = (type === 'full');
+            const btnId = isFull ? 'btn-run-infer-full' : 'btn-run-infer-short';
+            const otherBtnId = isFull ? 'btn-run-infer-short' : 'btn-run-infer-full';
+            
+            const btn = document.getElementById(btnId);
+            const otherBtn = document.getElementById(otherBtnId);
             const playerContainer = document.getElementById('audio-player-container');
             const player = document.getElementById('audio-player');
+            
+            const originalHtml = btn.innerHTML;
             
             // UI Loading state
             btn.innerHTML = `<svg class="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg> Processing...`;
             btn.disabled = true;
+            otherBtn.disabled = true;
             btn.classList.add('opacity-75', 'cursor-not-allowed');
+            otherBtn.classList.add('opacity-50', 'cursor-not-allowed');
             
             // Point player to backend endpoint, add timestamp to bust browser cache
-            player.src = '/api/infer?t=' + new Date().getTime();
+            player.src = `/api/infer?type=${type}&t=` + new Date().getTime();
             
             // When audio is fully received and ready to play
             player.oncanplay = () => {
                 playerContainer.classList.remove('hidden');
-                btn.innerHTML = `<svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg> Run Inference Pass`;
+                btn.innerHTML = originalHtml;
                 btn.disabled = false;
+                otherBtn.disabled = false;
                 btn.classList.remove('opacity-75', 'cursor-not-allowed');
+                otherBtn.classList.remove('opacity-50', 'cursor-not-allowed');
                 player.play();
-                showToast("Inference generated successfully", "success");
+                showToast(`Inference (${type}) generated successfully`, "success");
             };
             
             player.onerror = () => {
                 showToast("Failed to generate audio", "error");
                 btn.innerHTML = `Try Again`;
                 btn.disabled = false;
+                otherBtn.disabled = false;
                 btn.classList.remove('opacity-75', 'cursor-not-allowed');
+                otherBtn.classList.remove('opacity-50', 'cursor-not-allowed');
             };
         }
 
@@ -917,7 +936,9 @@ def download_weights():
 @app.route('/api/infer', methods=['GET'])
 def run_inference():
     """Runs a noisy test signal through the REAL PyTorch model and serves the output."""
-    log_msg("Running GPU inference on noisy test signal...")
+    track_type = request.args.get('type', 'short')
+    duration_str = "10s Full Track" if track_type == 'full' else "3s Test Pass"
+    log_msg(f"Running GPU inference ({duration_str})...")
     
     os.makedirs('outputs', exist_ok=True)
     out_filename = f"model_output_{int(time.time())}.wav"
@@ -927,13 +948,24 @@ def run_inference():
         noise_engine.eval() # Set to evaluation mode
         with torch.no_grad():
             sample_rate = 16000
-            duration = 3
+            duration = 10 if track_type == 'full' else 3
             
-            # Generate a 3-second C-Major chord as our test target
+            # Generate target signal
             t = torch.linspace(0, duration, sample_rate * duration)
-            clean_signal = (torch.sin(2 * math.pi * 261.63 * t) + 
-                            torch.sin(2 * math.pi * 329.63 * t) + 
-                            torch.sin(2 * math.pi * 392.00 * t)) / 3.0
+            
+            if track_type == 'full':
+                # Dynamically evolving chord for a longer track
+                f1 = 261.63 + 30 * torch.sin(2 * math.pi * 0.2 * t)
+                f2 = 329.63 + 30 * torch.sin(2 * math.pi * 0.2 * t)
+                f3 = 392.00 + 30 * torch.sin(2 * math.pi * 0.2 * t)
+                clean_signal = (torch.sin(2 * math.pi * f1 * t) + 
+                                torch.sin(2 * math.pi * f2 * t) + 
+                                torch.sin(2 * math.pi * f3 * t)) / 3.0
+            else:
+                # Basic 3-second C-Major chord
+                clean_signal = (torch.sin(2 * math.pi * 261.63 * t) + 
+                                torch.sin(2 * math.pi * 329.63 * t) + 
+                                torch.sin(2 * math.pi * 392.00 * t)) / 3.0
                             
             clean_signal = clean_signal.unsqueeze(0).unsqueeze(0).to(device)
             
