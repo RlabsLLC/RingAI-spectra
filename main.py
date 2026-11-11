@@ -61,6 +61,16 @@ def audio_downloader_worker():
         'noplaylist': False, # ALLOW PLAYLISTS
         'quiet': True,
         'extract_audio': True,
+        # --- NEW ANTI-BOT MEASURES ---
+        'extractor_args': {
+            'youtube': {
+                # Spoof the Android client to bypass strict web bot-checks
+                'player_client': ['android', 'web'] 
+            }
+        },
+        # If you upload a cookies.txt file to the same folder, yt-dlp will use it automatically
+        'cookiefile': 'cookies.txt', 
+        # -----------------------------
         'postprocessors': [{
             'key': 'FFmpegExtractAudio',
             'preferredcodec': 'wav',
