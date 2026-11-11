@@ -9,6 +9,11 @@ import wave
 import struct
 from flask import Flask, request, jsonify, render_template_string, send_file
 
+# --- NEW: PyTorch Imports ---
+import torch
+import torch.nn as nn
+import torchaudio
+
 # ---------------------------------------------------------------------------
 # Global State & Queues
 # ---------------------------------------------------------------------------
@@ -42,6 +47,31 @@ def log_msg(msg):
     state["logs"].insert(0, f"[{timestamp}] {msg}")
     if len(state["logs"]) > 50:
         state["logs"].pop()
+
+# ---------------------------------------------------------------------------
+# PyTorch Model Initialization (Real GPU Setup)
+# ---------------------------------------------------------------------------
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+log_msg(f"PyTorch initialized. Using device: {device.type.upper()}")
+
+class DummyNoiseEngine(nn.Module):
+    """A tiny baseline model to demonstrate actual GPU training and audio generation."""
+    def __init__(self):
+        super().__init__()
+        # Takes a chunk of 8000 audio samples, processes it, and outputs 8000 samples
+        self.net = nn.Sequential(
+            nn.Linear(8000, 2048),
+            nn.ReLU(),
+            nn.Linear(2048, 8000),
+            nn.Tanh() # Keep audio bound between -1 and 1
+        )
+        
+    def forward(self, x):
+        return self.net(x)
+
+# Instantiate the model and move it to the GPU
+engine_model = DummyNoiseEngine().to(device)
+optimizer = torch.optim.Adam(engine_model.parameters(), lr=0.001)
 
 # ---------------------------------------------------------------------------
 # Background Workers (The "Engine")
@@ -137,19 +167,45 @@ def model_training_worker():
             state["files_ready"] = training_queue.qsize()
             
             log_msg(f"Training step started on: {audio_file}")
-            log_msg(f"Using {state['model_architecture']} with MoE active: {state['moe_activation_params']}")
             
-            # Simulate PyTorch forward/backward pass time
-            time.sleep(4) 
+            # --- REAL PYTORCH GPU TRAINING STEP ---
+            try:
+                # 1. Load audio into memory
+                waveform, sample_rate = torchaudio.load(audio_file)
+                
+                # 2. Convert to mono if stereo
+                if waveform.shape[0] > 1:
+                    waveform = torch.mean(waveform, dim=0, keepdim=True)
+                
+                # 3. Move to GPU (CUDA)
+                waveform = waveform.to(device)
+                
+                # 4. Grab an 8000-sample chunk to train on
+                if waveform.shape[1] >= 8000:
+                    chunk = waveform[0, :8000].unsqueeze(0) # Shape: [1, 8000]
+                    
+                    # 5. Forward pass, Loss, and Backpropagation
+                    optimizer.zero_grad()
+                    engine_model.train()
+                    predicted_audio = engine_model(chunk)
+                    
+                    # Dummy task: Train the model to reconstruct the audio
+                    loss = nn.functional.mse_loss(predicted_audio, chunk)
+                    loss.backward()
+                    optimizer.step()
+                    
+                    log_msg(f"GPU Step Complete! Loss: {loss.item():.4f}")
+                else:
+                    log_msg("Audio file too short to process, skipping.")
+                    
+            except Exception as e:
+                log_msg(f"GPU Training Error: {str(e)}")
+            # --------------------------------------
             
-            # Simulate applying the longevity limit
-            log_msg(f"Processed up to max longevity of {state['max_song_longevity_sec']}s")
-            
-            # Cleanup simulated file
+            # Cleanup processed file to save disk space
             if os.path.exists(audio_file):
                 os.remove(audio_file)
                 
-            log_msg(f"Finished training step. Audio data flushed.")
             state["epochs_completed"] += 1
             training_queue.task_done()
             
@@ -451,43 +507,65 @@ HTML_TEMPLATE = """
             
             if (!files || files.length === 0) return;
             
-            const formData = new FormData();
-            let added = 0;
-            
+            // Filter valid files first
+            const validFiles = [];
             for (const file of files) {
-                // Check if it looks like an audio file
                 if (file.type.startsWith('audio/') || file.name.match(/\.(wav|mp3|flac|ogg|m4a)$/i)) {
-                    formData.append('files', file);
-                    added++;
+                    validFiles.push(file);
                 }
             }
             
-            if (added === 0) {
+            if (validFiles.length === 0) {
                 showToast("No valid audio files found in selection.", "error");
                 fileInput.value = ''; 
                 return;
             }
 
-            showToast(`Uploading ${added} audio file(s)...`, "info");
+            showToast(`Uploading ${validFiles.length} file(s) sequentially...`, "info");
+            
+            // Update UI to show progress
+            const dropzoneText = document.querySelector('#dropzone p.font-medium');
+            const originalText = dropzoneText.innerText;
+            
+            let successCount = 0;
+            let failCount = 0;
 
-            try {
-                const res = await fetch('/api/upload_audio', {
-                    method: 'POST',
-                    body: formData
-                });
+            // Upload sequentially to prevent cloud proxy limits (HTTP 413 Entity Too Large)
+            for (let i = 0; i < validFiles.length; i++) {
+                dropzoneText.innerText = `Uploading ${i + 1} of ${validFiles.length}...`;
                 
-                if (res.ok) {
-                    showToast(`Successfully uploaded ${added} file(s)!`, "success");
-                    switchTab('dashboard');
-                } else {
-                    showToast("Upload failed server-side.", "error");
+                const formData = new FormData();
+                formData.append('files', validFiles[i]);
+
+                try {
+                    const res = await fetch('/api/upload_audio', {
+                        method: 'POST',
+                        body: formData
+                    });
+                    
+                    if (res.ok) {
+                        successCount++;
+                    } else {
+                        failCount++;
+                    }
+                } catch (err) {
+                    console.error("Upload failed for:", validFiles[i].name, err);
+                    failCount++;
                 }
-            } catch (err) {
-                console.error("Upload failed:", err);
-                showToast("Upload failed. Check connection.", "error");
-            } finally {
-                fileInput.value = ''; // clear input so the same files can be selected again if needed
             }
+            
+            // Restore UI
+            dropzoneText.innerText = originalText;
+
+            if (successCount > 0) {
+                showToast(`Successfully uploaded ${successCount} file(s)!`, "success");
+                switchTab('dashboard');
+            }
+            if (failCount > 0) {
+                showToast(`Failed to upload ${failCount} file(s).`, "error");
+            }
+            
+            fileInput.value = ''; // clear input so the same files can be selected again if needed
         }
 
         // Drag and Drop Logic
@@ -778,32 +856,35 @@ def download_weights():
 
 @app.route('/api/infer', methods=['GET'])
 def infer_audio():
-    """Generates a valid .wav file (sine wave) to simulate model inference output."""
-    log_msg("Running inference step. Generating audio output...")
+    """Generates a real audio file output by running a forward pass on the GPU."""
+    log_msg("Running inference step on GPU...")
     
-    # Generate a 2-second 440Hz sine wave as a placeholder for model output
-    sample_rate = 44100
-    duration = 2.0
-    frequency = 440.0
-    
-    memory_file = io.BytesIO()
-    with wave.open(memory_file, 'w') as wav_file:
-        wav_file.setnchannels(1)
-        wav_file.setsampwidth(2)
-        wav_file.setframerate(sample_rate)
-        
-        for i in range(int(sample_rate * duration)):
-            value = int(32767.0 * math.sin(2.0 * math.pi * frequency * i / sample_rate))
-            data = struct.pack('<h', value)
-            wav_file.writeframesraw(data)
+    try:
+        engine_model.eval()
+        with torch.no_grad():
+            # 1. Generate some random noise as a starting seed
+            seed_noise = torch.randn(1, 8000).to(device)
             
-    memory_file.seek(0)
-    log_msg("Inference complete. Streaming audio to client.")
-    
-    return send_file(
-        memory_file,
-        mimetype='audio/wav'
-    )
+            # 2. Run it through your trained neural network
+            generated_audio = engine_model(seed_noise)
+            
+            # 3. Move the result back to the CPU for saving
+            output_cpu = generated_audio.cpu()
+            
+        # 4. Save the tensor as a .wav file directly into RAM
+        memory_file = io.BytesIO()
+        torchaudio.save(memory_file, output_cpu, 44100, format="wav")
+        memory_file.seek(0)
+        
+        log_msg("Inference complete. Streaming generated audio to client.")
+        
+        return send_file(
+            memory_file,
+            mimetype='audio/wav'
+        )
+    except Exception as e:
+        log_msg(f"Inference crashed: {str(e)}")
+        return jsonify({"error": "Failed to generate audio"}), 500
 
 # ---------------------------------------------------------------------------
 # Entry Point
