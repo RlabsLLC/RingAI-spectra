@@ -175,194 +175,252 @@ HTML_TEMPLATE = """
     <title>Audio Noise Engine Controller</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
-        .tab-content { display: none; }
-        .tab-content.active { display: block; }
-        .tab-btn.active { border-bottom: 2px solid #3b82f6; color: #3b82f6; }
+        .tab-content { display: none; opacity: 0; transition: opacity 0.3s ease; }
+        .tab-content.active { display: block; opacity: 1; }
+        .nav-item.active { background-color: rgba(59, 130, 246, 0.1); border-right: 4px solid #3b82f6; color: #60a5fa; }
+        
+        /* Custom scrollbar for terminal */
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: #1f2937; }
+        ::-webkit-scrollbar-thumb { background: #4b5563; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #6b7280; }
+        
+        #toast-container { position: fixed; bottom: 20px; right: 20px; z-index: 50; display: flex; flex-direction: column; gap: 10px; }
+        .toast { padding: 12px 20px; border-radius: 6px; color: white; font-weight: 500; opacity: 0; transform: translateY(20px); transition: all 0.3s ease; }
+        .toast.show { opacity: 1; transform: translateY(0); }
+        .toast.success { background-color: #10b981; }
+        .toast.error { background-color: #ef4444; }
+        .toast.info { background-color: #3b82f6; }
     </style>
 </head>
-<body class="bg-gray-900 text-white min-h-screen font-sans">
+<body class="bg-gray-950 text-gray-200 min-h-screen font-sans flex overflow-hidden">
     
-    <div class="max-w-5xl mx-auto p-6">
-        <header class="mb-8 flex justify-between items-end border-b border-gray-700 pb-4">
-            <div>
-                <h1 class="text-3xl font-bold text-blue-400" id="ui-project-name">Noise Engine Controller</h1>
-                <p class="text-gray-400 text-sm mt-1">Live Audio Streaming & Model Training Dashboard</p>
+    <!-- Sidebar -->
+    <aside class="w-64 bg-gray-900 border-r border-gray-800 flex flex-col justify-between h-screen">
+        <div>
+            <div class="p-6 border-b border-gray-800">
+                <h1 class="text-xl font-bold text-blue-400" id="ui-project-name">Noise Engine</h1>
+                <div class="flex items-center space-x-2 mt-2">
+                    <span class="relative flex h-2.5 w-2.5">
+                      <span id="status-ping" class="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
+                      <span id="status-dot" class="relative inline-flex rounded-full h-2.5 w-2.5 bg-red-500"></span>
+                    </span>
+                    <span id="status-text" class="text-xs text-gray-400 font-mono uppercase tracking-wider">Status: Idle</span>
+                </div>
             </div>
-            <div class="flex items-center space-x-3">
-                <span class="relative flex h-3 w-3">
-                  <span id="status-ping" class="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
-                  <span id="status-dot" class="relative inline-flex rounded-full h-3 w-3 bg-red-500"></span>
-                </span>
-                <span id="status-text" class="text-sm text-gray-300 font-mono">Status: Idle</span>
-            </div>
-        </header>
-
-        <!-- Tabs Navigation -->
-        <div class="flex space-x-6 border-b border-gray-700 mb-6">
-            <button onclick="switchTab('dashboard')" id="tab-dashboard" class="tab-btn active pb-2 text-gray-400 hover:text-white font-medium transition">Dashboard</button>
-            <button onclick="switchTab('downloader')" id="tab-downloader" class="tab-btn pb-2 text-gray-400 hover:text-white font-medium transition">Stream / Downloader</button>
-            <button onclick="switchTab('config')" id="tab-config" class="tab-btn pb-2 text-gray-400 hover:text-white font-medium transition">Model Parameters</button>
-            <button onclick="switchTab('inference')" id="tab-inference" class="tab-btn pb-2 text-gray-400 hover:text-white font-medium transition">Inference / Test</button>
+            
+            <nav class="flex flex-col mt-4 space-y-1">
+                <button onclick="switchTab('dashboard')" id="nav-dashboard" class="nav-item active px-6 py-3 text-left text-sm font-medium text-gray-400 hover:text-white hover:bg-gray-800 transition flex items-center">
+                    <svg class="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"></path></svg>
+                    Dashboard
+                </button>
+                <button onclick="switchTab('downloader')" id="nav-downloader" class="nav-item px-6 py-3 text-left text-sm font-medium text-gray-400 hover:text-white hover:bg-gray-800 transition flex items-center">
+                    <svg class="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M9 19l3 3m0 0l3-3m-3 3V10"></path></svg>
+                    Add Audio Data
+                </button>
+                <button onclick="switchTab('config')" id="nav-config" class="nav-item px-6 py-3 text-left text-sm font-medium text-gray-400 hover:text-white hover:bg-gray-800 transition flex items-center">
+                    <svg class="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
+                    Parameters
+                </button>
+                <button onclick="switchTab('inference')" id="nav-inference" class="nav-item px-6 py-3 text-left text-sm font-medium text-gray-400 hover:text-white hover:bg-gray-800 transition flex items-center">
+                    <svg class="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                    Test Engine
+                </button>
+            </nav>
         </div>
+        <div class="p-6">
+            <button onclick="downloadWeights()" class="w-full py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-bold rounded shadow transition flex items-center justify-center space-x-2">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
+                <span>Export Weights</span>
+            </button>
+        </div>
+    </aside>
 
+    <!-- Main Content -->
+    <main class="flex-1 h-screen overflow-y-auto bg-gray-950 p-8">
+        
         <!-- TAB: Dashboard -->
-        <div id="content-dashboard" class="tab-content active">
-            <div class="grid grid-cols-1 md:grid-cols-5 gap-6 mb-6">
-                <div class="bg-gray-800 p-4 rounded-lg shadow-lg border border-gray-700">
-                    <h3 class="text-gray-400 text-xs uppercase tracking-wider mb-1">Training Queue</h3>
-                    <p class="text-3xl font-bold text-white" id="stat-queue">0</p>
-                    <p class="text-xs text-gray-500 mt-1">Audio files buffered</p>
+        <div id="content-dashboard" class="tab-content active max-w-5xl mx-auto">
+            <h2 class="text-2xl font-bold mb-6">Engine Overview</h2>
+            
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
+                <div class="bg-gray-900 p-5 rounded-xl border border-gray-800 shadow-sm">
+                    <h3 class="text-gray-400 text-xs uppercase tracking-wider mb-2">Files in Queue</h3>
+                    <p class="text-4xl font-light text-white" id="stat-queue">0</p>
                 </div>
-                <div class="bg-gray-800 p-4 rounded-lg shadow-lg border border-gray-700">
-                    <h3 class="text-gray-400 text-xs uppercase tracking-wider mb-1">Epochs / Steps</h3>
-                    <p class="text-3xl font-bold text-white" id="stat-epochs">0</p>
-                    <p class="text-xs text-gray-500 mt-1">Completed iterations</p>
+                <div class="bg-gray-900 p-5 rounded-xl border border-gray-800 shadow-sm">
+                    <h3 class="text-gray-400 text-xs uppercase tracking-wider mb-2">Training Epochs</h3>
+                    <p class="text-4xl font-light text-white" id="stat-epochs">0</p>
                 </div>
-                <div class="bg-gray-800 p-4 rounded-lg shadow-lg border border-gray-700 flex flex-col justify-center">
-                    <button id="btn-toggle-train" onclick="toggleTraining()" class="w-full py-3 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded shadow transition">
-                        Start Training Engine
-                    </button>
-                </div>
-                <div class="bg-gray-800 p-4 rounded-lg shadow-lg border border-gray-700 flex flex-col justify-center">
-                    <button onclick="downloadWeights()" class="w-full py-3 bg-purple-600 hover:bg-purple-500 text-white font-bold rounded shadow transition flex items-center justify-center space-x-2">
-                        <span>Download Weights</span>
-                        <span class="text-xs bg-purple-800 px-2 py-1 rounded">.ZIP</span>
-                    </button>
-                </div>
-                
-                <!-- NEW: Shortcut to the upload section -->
-                <div class="bg-gray-800 p-4 rounded-lg shadow-lg border border-gray-700 flex flex-col justify-center">
-                    <button onclick="switchTab('downloader')" class="w-full py-3 bg-gray-600 hover:bg-gray-500 text-white font-bold rounded shadow transition flex items-center justify-center space-x-2">
-                        <span>📁 Upload Local Audio</span>
+                <div class="bg-gray-900 p-5 rounded-xl border border-gray-800 shadow-sm flex flex-col justify-center">
+                    <button id="btn-toggle-train" onclick="toggleTraining()" class="w-full py-3 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-lg transition flex items-center justify-center space-x-2">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
+                        <span>Start Training</span>
                     </button>
                 </div>
             </div>
 
-            <div class="bg-gray-800 rounded-lg shadow-lg border border-gray-700 overflow-hidden">
-                <div class="bg-gray-900 px-4 py-2 border-b border-gray-700 flex justify-between">
-                    <span class="text-xs text-gray-400 font-mono">System Console logs</span>
+            <div class="bg-gray-900 rounded-xl border border-gray-800 overflow-hidden shadow-sm">
+                <div class="bg-gray-800/50 px-4 py-3 border-b border-gray-800 flex justify-between items-center">
+                    <span class="text-xs text-gray-400 font-mono tracking-widest uppercase">System Terminal</span>
+                    <button onclick="document.getElementById('log-container').innerHTML=''" class="text-xs text-gray-500 hover:text-gray-300">Clear</button>
                 </div>
-                <div class="p-4 h-64 overflow-y-auto font-mono text-sm space-y-1" id="log-container">
+                <div class="p-4 h-96 overflow-y-auto font-mono text-sm space-y-1.5" id="log-container">
                     <!-- Logs injected via JS -->
                 </div>
             </div>
         </div>
 
         <!-- TAB: Downloader -->
-        <div id="content-downloader" class="tab-content">
-            <div class="bg-gray-800 p-6 rounded-lg shadow-lg border border-gray-700">
-                <h2 class="text-xl font-bold mb-4">Add Audio Stream</h2>
-                <p class="text-sm text-gray-400 mb-4">Paste URLs from YouTube, Internet Radio, or Audio Datasets. The background thread will pull the streams while the model trains simultaneously.</p>
+        <div id="content-downloader" class="tab-content max-w-4xl mx-auto">
+            <h2 class="text-2xl font-bold mb-6">Add Audio Data</h2>
+            
+            <div class="bg-gray-900 p-6 rounded-xl border border-gray-800 shadow-sm mb-6">
+                <h3 class="text-lg font-semibold mb-2">Stream via URL</h3>
+                <p class="text-sm text-gray-400 mb-4">Paste a YouTube or audio stream link. The engine will download it in the background.</p>
                 
-                <div class="flex space-x-4 mb-8">
-                    <input type="text" id="stream-url" placeholder="https://example.com/audio-stream" class="flex-1 bg-gray-900 border border-gray-600 rounded px-4 py-2 text-white focus:outline-none focus:border-blue-500">
-                    <button onclick="addStream()" class="bg-green-600 hover:bg-green-500 px-6 py-2 rounded font-bold transition">Queue Audio</button>
+                <div class="flex space-x-3">
+                    <input type="text" id="stream-url" placeholder="https://youtube.com/..." class="flex-1 bg-gray-950 border border-gray-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500">
+                    <button onclick="addStream()" class="bg-emerald-600 hover:bg-emerald-500 px-6 py-2 rounded-lg font-bold transition flex items-center">
+                        <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path></svg>
+                        Queue
+                    </button>
                 </div>
+            </div>
 
-                <div class="border-t border-gray-700 pt-6">
-                    <h2 class="text-xl font-bold mb-4">Upload Local Audio Folder</h2>
-                    <p class="text-sm text-gray-400 mb-4">Select a folder on your computer to batch-upload local audio files directly to the training queue.</p>
+            <div class="bg-gray-900 p-6 rounded-xl border border-gray-800 shadow-sm">
+                <h3 class="text-lg font-semibold mb-2">Upload Local Files</h3>
+                <p class="text-sm text-gray-400 mb-4">Upload raw audio files (.wav, .mp3, .flac) directly from your machine.</p>
+                
+                <div class="border-2 border-dashed border-gray-700 rounded-xl p-8 text-center hover:border-gray-500 transition cursor-pointer" id="dropzone" onclick="document.getElementById('file-upload').click()">
+                    <svg class="mx-auto h-12 w-12 text-gray-500 mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path></svg>
+                    <p class="text-gray-300 font-medium">Click to select files, or drag and drop</p>
+                    <p class="text-xs text-gray-500 mt-1">Supports WAV, MP3, FLAC, M4A, OGG</p>
+                </div>
+                
+                <div class="mt-4 flex space-x-3 justify-center">
+                    <!-- Hidden inputs for actual selection -->
+                    <input type="file" id="file-upload" multiple accept="audio/*" class="hidden" onchange="handleFilesSelected(event)">
+                    <input type="file" id="folder-upload" webkitdirectory directory multiple class="hidden" onchange="handleFilesSelected(event)">
                     
-                    <div class="flex space-x-4 items-center">
-                        <input type="file" id="folder-upload" webkitdirectory directory multiple class="block w-full text-sm text-gray-400
-                            file:mr-4 file:py-2 file:px-4
-                            file:rounded file:border-0
-                            file:text-sm file:font-semibold
-                            file:bg-gray-700 file:text-white
-                            hover:file:bg-gray-600 focus:outline-none cursor-pointer
-                        "/>
-                        <button onclick="uploadFolder(event)" class="bg-blue-600 hover:bg-blue-500 px-6 py-2 rounded font-bold transition whitespace-nowrap">
-                            Upload Folder
-                        </button>
-                    </div>
+                    <button onclick="document.getElementById('file-upload').click()" class="bg-gray-800 hover:bg-gray-700 border border-gray-700 px-4 py-2 rounded-lg text-sm font-medium transition">
+                        Select Files
+                    </button>
+                    <button onclick="document.getElementById('folder-upload').click()" class="bg-gray-800 hover:bg-gray-700 border border-gray-700 px-4 py-2 rounded-lg text-sm font-medium transition">
+                        Select Entire Folder
+                    </button>
                 </div>
             </div>
         </div>
 
         <!-- TAB: Configuration -->
-        <div id="content-config" class="tab-content">
-            <div class="bg-gray-800 p-6 rounded-lg shadow-lg border border-gray-700">
-                <h2 class="text-xl font-bold mb-6">Model Architecture & Settings</h2>
+        <div id="content-config" class="tab-content max-w-3xl mx-auto">
+            <h2 class="text-2xl font-bold mb-6">Engine Parameters</h2>
+            
+            <form id="config-form" onsubmit="saveConfig(event)" class="bg-gray-900 p-6 rounded-xl border border-gray-800 shadow-sm space-y-6">
+                <div>
+                    <label class="block text-sm font-medium text-gray-400 mb-1">Project Name</label>
+                    <input type="text" id="cfg-name" class="w-full bg-gray-950 border border-gray-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-blue-500">
+                </div>
+
+                <div>
+                    <label class="block text-sm font-medium text-gray-400 mb-1">Model Architecture</label>
+                    <select id="cfg-arch" class="w-full bg-gray-950 border border-gray-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-blue-500">
+                        <option value="1B Dense">1B Parameter (Dense) - Fast/Baseline</option>
+                        <option value="4B-A1B MoE">4B Total / 1B Active (Mixture of Experts)</option>
+                    </select>
+                </div>
+
+                <div class="flex items-center p-3 bg-gray-950 rounded-lg border border-gray-800">
+                    <input type="checkbox" id="cfg-moe" class="h-5 w-5 rounded bg-gray-800 border-gray-600 text-blue-500 focus:ring-blue-500 focus:ring-opacity-25 focus:ring-offset-gray-900">
+                    <label class="ml-3 block text-sm font-medium text-gray-300 cursor-pointer" for="cfg-moe">
+                        Enable MoE Parameter Activation (Sparse Routing)
+                    </label>
+                </div>
+
+                <div>
+                    <label class="block text-sm font-medium text-gray-400 mb-1">Max Audio Clipping (Seconds)</label>
+                    <input type="number" id="cfg-longevity" class="w-full bg-gray-950 border border-gray-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-blue-500">
+                    <p class="text-xs text-gray-500 mt-1">Limits sequence length to prevent VRAM Out-Of-Memory errors.</p>
+                </div>
                 
-                <form id="config-form" onsubmit="saveConfig(event)" class="space-y-6">
-                    <div>
-                        <label class="block text-sm font-medium text-gray-400 mb-1">Project Name</label>
-                        <input type="text" id="cfg-name" class="w-full bg-gray-900 border border-gray-600 rounded px-4 py-2 focus:outline-none focus:border-blue-500">
-                    </div>
-
-                    <div>
-                        <label class="block text-sm font-medium text-gray-400 mb-1">Model Architecture</label>
-                        <select id="cfg-arch" class="w-full bg-gray-900 border border-gray-600 rounded px-4 py-2 focus:outline-none focus:border-blue-500">
-                            <option value="1B Dense">1B Parameter (Dense) - Good for testing</option>
-                            <option value="4B-A1B MoE">4B Total / 1B Active (Mixture of Experts)</option>
-                        </select>
-                    </div>
-
-                    <div class="flex items-center">
-                        <input type="checkbox" id="cfg-moe" class="h-5 w-5 rounded bg-gray-900 border-gray-600 text-blue-500 focus:ring-blue-500 focus:ring-opacity-25">
-                        <label class="ml-3 block text-sm font-medium text-gray-300">
-                            Enable MoE Parameter Activation (Sparse Routing)
-                        </label>
-                    </div>
-
-                    <div>
-                        <label class="block text-sm font-medium text-gray-400 mb-1">Max Audio Output Longevity (Seconds)</label>
-                        <input type="number" id="cfg-longevity" class="w-full bg-gray-900 border border-gray-600 rounded px-4 py-2 focus:outline-none focus:border-blue-500">
-                        <p class="text-xs text-gray-500 mt-1">Crops continuous streams to this length to prevent VRAM overflow.</p>
-                    </div>
-                    
-                    <div class="pt-6 border-t border-gray-700">
-                        <h3 class="text-lg font-bold mb-4 text-purple-400">Hugging Face Integration</h3>
-                        <div class="space-y-4">
-                            <div>
-                                <label class="block text-sm font-medium text-gray-400 mb-1">HF Repository ID</label>
-                                <input type="text" id="cfg-hf-repo" placeholder="username/noise-engine-1B" class="w-full bg-gray-900 border border-gray-600 rounded px-4 py-2 focus:outline-none focus:border-purple-500">
-                            </div>
-                            <div>
-                                <label class="block text-sm font-medium text-gray-400 mb-1">HF Access Token (Write)</label>
-                                <input type="password" id="cfg-hf-token" placeholder="hf_..." class="w-full bg-gray-900 border border-gray-600 rounded px-4 py-2 focus:outline-none focus:border-purple-500">
-                            </div>
+                <div class="pt-6 border-t border-gray-800">
+                    <h3 class="text-sm font-bold tracking-wider uppercase mb-4 text-purple-400">Hugging Face Sync</h3>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-xs font-medium text-gray-400 mb-1">Repository ID</label>
+                            <input type="text" id="cfg-hf-repo" placeholder="username/repo-name" class="w-full bg-gray-950 border border-gray-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-purple-500">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-medium text-gray-400 mb-1">Write Token</label>
+                            <input type="password" id="cfg-hf-token" placeholder="hf_..." class="w-full bg-gray-950 border border-gray-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-purple-500">
                         </div>
                     </div>
+                </div>
 
-                    <div class="pt-4 border-t border-gray-700 flex justify-end">
-                        <button type="submit" class="bg-blue-600 hover:bg-blue-500 px-6 py-2 rounded font-bold transition">Apply Changes</button>
-                    </div>
-                </form>
-            </div>
+                <div class="pt-4 flex justify-end">
+                    <button type="submit" class="bg-blue-600 hover:bg-blue-500 px-6 py-2 rounded-lg font-bold transition">Apply Changes</button>
+                </div>
+            </form>
         </div>
         
         <!-- TAB: Inference -->
-        <div id="content-inference" class="tab-content">
-            <div class="bg-gray-800 p-6 rounded-lg shadow-lg border border-gray-700">
-                <h2 class="text-xl font-bold mb-4">Run Trained Model</h2>
-                <p class="text-sm text-gray-400 mb-6">Generate audio output using your current model weights. (Currently generates a test tone to verify pipeline).</p>
+        <div id="content-inference" class="tab-content max-w-3xl mx-auto">
+            <h2 class="text-2xl font-bold mb-6">Test Engine</h2>
+            
+            <div class="bg-gray-900 p-6 rounded-xl border border-gray-800 shadow-sm text-center">
+                <div class="w-20 h-20 mx-auto bg-gray-800 rounded-full flex items-center justify-center mb-4 border border-gray-700">
+                    <svg class="w-10 h-10 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"></path></svg>
+                </div>
                 
-                <div class="space-y-6">
-                    <button onclick="runInference()" class="w-full bg-green-600 hover:bg-green-500 py-3 rounded font-bold transition">
-                        Generate Audio Output
-                    </button>
-                    
-                    <div id="audio-player-container" class="hidden mt-6 p-4 bg-gray-900 rounded border border-gray-700">
-                        <h3 class="text-sm text-gray-400 mb-2">Generated Output:</h3>
-                        <audio id="audio-player" controls class="w-full">
-                            Your browser does not support the audio element.
-                        </audio>
-                    </div>
+                <h3 class="text-xl font-semibold mb-2">Generate Clean Audio</h3>
+                <p class="text-sm text-gray-400 mb-8 max-w-md mx-auto">Run a forward pass through your currently trained weights to produce a sample output.</p>
+                
+                <button id="btn-run-infer" onclick="runInference()" class="w-full max-w-xs mx-auto bg-blue-600 hover:bg-blue-500 py-3 rounded-lg font-bold transition flex justify-center items-center">
+                    <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                    Run Inference Pass
+                </button>
+                
+                <div id="audio-player-container" class="hidden mt-8 pt-6 border-t border-gray-800">
+                    <p class="text-xs text-gray-400 uppercase tracking-wider mb-3 text-left">Output Result</p>
+                    <audio id="audio-player" controls class="w-full rounded-lg shadow-lg">
+                        Your browser does not support the audio element.
+                    </audio>
                 </div>
             </div>
         </div>
 
-    </div>
+    </main>
+
+    <!-- Toast Notifications Container -->
+    <div id="toast-container"></div>
 
     <script>
+        // Notification System
+        function showToast(message, type = 'info') {
+            const container = document.getElementById('toast-container');
+            const toast = document.createElement('div');
+            toast.className = `toast ${type}`;
+            toast.innerText = message;
+            container.appendChild(toast);
+            
+            // Trigger animation
+            setTimeout(() => toast.classList.add('show'), 10);
+            
+            // Remove after 3 seconds
+            setTimeout(() => {
+                toast.classList.remove('show');
+                setTimeout(() => toast.remove(), 300);
+            }, 3000);
+        }
+
         // Tab switching logic
         function switchTab(tabId) {
             document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
-            document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
+            document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
             
             document.getElementById(`content-${tabId}`).classList.add('active');
-            document.getElementById(`tab-${tabId}`).classList.add('active');
+            document.getElementById(`nav-${tabId}`).classList.add('active');
         }
 
         // Add Stream logic
@@ -371,34 +429,32 @@ HTML_TEMPLATE = """
             const url = urlInput.value.trim();
             if (!url) return;
             
-            await fetch('/api/add_stream', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ url: url })
-            });
-            urlInput.value = '';
-            // Auto switch back to dashboard to see logs
-            switchTab('dashboard');
+            try {
+                await fetch('/api/add_stream', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ url: url })
+                });
+                showToast("Stream added to queue!", "success");
+                urlInput.value = '';
+                switchTab('dashboard');
+            } catch (e) {
+                showToast("Failed to add stream.", "error");
+            }
         }
 
-        // Upload Folder logic
-        async function uploadFolder(event) {
-            const fileInput = document.getElementById('folder-upload');
-            if (!fileInput.files.length) {
-                alert("Please select a folder first.");
-                return;
-            }
+        // Consolidated Upload logic for both Files and Folders
+        async function handleFilesSelected(event) {
+            const fileInput = event.target;
+            const files = fileInput.files;
             
-            const btn = event.target;
-            const originalText = btn.innerText;
-            btn.innerText = "Uploading...";
-            btn.classList.add('opacity-50', 'cursor-not-allowed');
+            if (!files || files.length === 0) return;
             
             const formData = new FormData();
             let added = 0;
             
-            for (const file of fileInput.files) {
-                // Basic check to ensure it's an audio file
+            for (const file of files) {
+                // Check if it looks like an audio file
                 if (file.type.startsWith('audio/') || file.name.match(/\.(wav|mp3|flac|ogg|m4a)$/i)) {
                     formData.append('files', file);
                     added++;
@@ -406,60 +462,98 @@ HTML_TEMPLATE = """
             }
             
             if (added === 0) {
-                alert("No valid audio files found in the selected folder.");
-                btn.innerText = originalText;
-                btn.classList.remove('opacity-50', 'cursor-not-allowed');
+                showToast("No valid audio files found in selection.", "error");
+                fileInput.value = ''; 
                 return;
             }
 
+            showToast(`Uploading ${added} audio file(s)...`, "info");
+
             try {
-                await fetch('/api/upload_audio', {
+                const res = await fetch('/api/upload_audio', {
                     method: 'POST',
                     body: formData
                 });
-                fileInput.value = ''; // clear input
-                switchTab('dashboard'); // switch to see logs
+                
+                if (res.ok) {
+                    showToast(`Successfully uploaded ${added} file(s)!`, "success");
+                    switchTab('dashboard');
+                } else {
+                    showToast("Upload failed server-side.", "error");
+                }
             } catch (err) {
                 console.error("Upload failed:", err);
-                alert("Upload failed. Check console.");
+                showToast("Upload failed. Check connection.", "error");
             } finally {
-                btn.innerText = originalText;
-                btn.classList.remove('opacity-50', 'cursor-not-allowed');
+                fileInput.value = ''; // clear input so the same files can be selected again if needed
             }
         }
 
+        // Drag and Drop Logic
+        const dropzone = document.getElementById('dropzone');
+        dropzone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            dropzone.classList.add('border-blue-500', 'bg-gray-800');
+        });
+        dropzone.addEventListener('dragleave', (e) => {
+            e.preventDefault();
+            dropzone.classList.remove('border-blue-500', 'bg-gray-800');
+        });
+        dropzone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dropzone.classList.remove('border-blue-500', 'bg-gray-800');
+            if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+                // Create a synthetic event object to reuse handleFilesSelected
+                handleFilesSelected({ target: { files: e.dataTransfer.files } });
+            }
+        });
+
         // Toggle Training Engine
         async function toggleTraining() {
-            await fetch('/api/toggle_training', { method: 'POST' });
+            try {
+                await fetch('/api/toggle_training', { method: 'POST' });
+                showToast("Toggled Engine State", "info");
+            } catch (e) {
+                showToast("Command failed", "error");
+            }
         }
 
         // Download Weights ZIP
         function downloadWeights() {
+            showToast("Packaging model weights...", "info");
             window.location.href = '/api/download_weights';
         }
 
-        // Run Inference
-        async function runInference() {
+        // Run Inference (Fixed duplicate)
+        function runInference() {
             const btn = document.getElementById('btn-run-infer');
-            btn.innerText = "Processing Audio...";
-            btn.classList.add('opacity-50', 'cursor-not-allowed');
+            const playerContainer = document.getElementById('audio-player-container');
+            const player = document.getElementById('audio-player');
             
-            try {
-                const res = await fetch('/api/run_inference', { method: 'POST' });
-                const data = await res.json();
-                
-                if (data.status === "success") {
-                    const player = document.getElementById('output-audio-player');
-                    // Add timestamp to prevent browser caching the audio
-                    player.src = data.audio_url + '?t=' + new Date().getTime();
-                    document.getElementById('audio-result-container').classList.remove('hidden');
-                }
-            } catch (err) {
-                console.error("Inference failed:", err);
-            }
+            // UI Loading state
+            btn.innerHTML = `<svg class="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg> Processing...`;
+            btn.disabled = true;
+            btn.classList.add('opacity-75', 'cursor-not-allowed');
             
-            btn.innerText = "Generate Output Audio";
-            btn.classList.remove('opacity-50', 'cursor-not-allowed');
+            // Point player to backend endpoint, add timestamp to bust browser cache
+            player.src = '/api/infer?t=' + new Date().getTime();
+            
+            // When audio is fully received and ready to play
+            player.oncanplay = () => {
+                playerContainer.classList.remove('hidden');
+                btn.innerHTML = `<svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg> Run Inference Pass`;
+                btn.disabled = false;
+                btn.classList.remove('opacity-75', 'cursor-not-allowed');
+                player.play();
+                showToast("Inference generated successfully", "success");
+            };
+            
+            player.onerror = () => {
+                showToast("Failed to generate audio", "error");
+                btn.innerHTML = `Try Again`;
+                btn.disabled = false;
+                btn.classList.remove('opacity-75', 'cursor-not-allowed');
+            };
         }
 
         // Save Configuration
@@ -474,23 +568,16 @@ HTML_TEMPLATE = """
                 hf_token: document.getElementById('cfg-hf-token').value
             };
             
-            await fetch('/api/update_params', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify(config)
-            });
-            alert("Settings applied securely to the Engine.");
-        }
-        
-        // Run Inference
-        async function runInference() {
-            const playerContainer = document.getElementById('audio-player-container');
-            const player = document.getElementById('audio-player');
-            
-            // Show player and fetch the dynamically generated audio
-            playerContainer.classList.remove('hidden');
-            player.src = '/api/infer?t=' + new Date().getTime(); // Prevent caching
-            player.play();
+            try {
+                await fetch('/api/update_params', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(config)
+                });
+                showToast("Settings applied securely", "success");
+            } catch (err) {
+                showToast("Failed to save settings", "error");
+            }
         }
 
         // Polling state from backend
@@ -511,29 +598,28 @@ HTML_TEMPLATE = """
                 const txt = document.getElementById('status-text');
 
                 if (data.is_training) {
-                    btn.innerText = "Stop Training Engine";
+                    btn.innerHTML = `<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 10a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z"></path></svg> <span>Stop Training</span>`;
                     btn.classList.replace('bg-blue-600', 'bg-red-600');
                     btn.classList.replace('hover:bg-blue-500', 'hover:bg-red-500');
-                    dot.classList.replace('bg-red-500', 'bg-green-500');
-                    ping.classList.replace('bg-red-400', 'bg-green-400');
+                    dot.classList.replace('bg-red-500', 'bg-emerald-500');
+                    ping.classList.replace('bg-red-400', 'bg-emerald-400');
                     txt.innerText = "Status: Training Active";
                 } else {
-                    btn.innerText = "Start Training Engine";
+                    btn.innerHTML = `<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg> <span>Start Training</span>`;
                     btn.classList.replace('bg-red-600', 'bg-blue-600');
                     btn.classList.replace('hover:bg-red-500', 'hover:bg-blue-500');
-                    dot.classList.replace('bg-green-500', 'bg-red-500');
-                    ping.classList.replace('bg-green-400', 'bg-red-400');
+                    dot.classList.replace('bg-emerald-500', 'bg-red-500');
+                    ping.classList.replace('bg-emerald-400', 'bg-red-400');
                     txt.innerText = "Status: Idle";
                 }
 
-                // Update Config form values (only if not currently focused)
+                // Update Config form values (only if not currently focused to avoid overwriting typing)
                 if (document.activeElement.tagName !== "INPUT" && document.activeElement.tagName !== "SELECT") {
                     document.getElementById('cfg-name').value = data.project_name;
                     document.getElementById('cfg-arch').value = data.model_architecture;
                     document.getElementById('cfg-moe').checked = data.moe_activation_params;
                     document.getElementById('cfg-longevity').value = data.max_song_longevity_sec;
                     document.getElementById('cfg-hf-repo').value = data.hf_repo_id;
-                    // Don't auto-update password field to prevent clearing while typing
                     if(data.hf_token && document.getElementById('cfg-hf-token').value === "") {
                         document.getElementById('cfg-hf-token').value = data.hf_token;
                     }
@@ -541,16 +627,20 @@ HTML_TEMPLATE = """
 
                 // Update Logs
                 const logContainer = document.getElementById('log-container');
-                logContainer.innerHTML = '';
-                data.logs.forEach(log => {
-                    const el = document.createElement('div');
-                    // Format output for specific keywords
-                    if (log.includes("Error")) el.className = "text-red-400";
-                    else if (log.includes("Successfully") || log.includes("Finished")) el.className = "text-green-400";
-                    else el.className = "text-gray-300";
-                    el.innerText = log;
-                    logContainer.appendChild(el);
-                });
+                // Only update if there's new data to prevent scrolling jumpiness
+                if (logContainer.childElementCount !== data.logs.length || 
+                   (logContainer.firstChild && logContainer.firstChild.innerText !== data.logs[0])) {
+                    
+                    logContainer.innerHTML = '';
+                    data.logs.forEach(log => {
+                        const el = document.createElement('div');
+                        if (log.includes("Error") || log.includes("failed")) el.className = "text-red-400";
+                        else if (log.includes("Successfully") || log.includes("Finished")) el.className = "text-emerald-400";
+                        else el.className = "text-gray-400";
+                        el.innerText = log;
+                        logContainer.appendChild(el);
+                    });
+                }
 
             } catch (err) {
                 console.error("Connection lost:", err);
