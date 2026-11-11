@@ -917,7 +917,7 @@ def download_weights():
 @app.route('/api/infer', methods=['GET'])
 def run_inference():
     """Runs a noisy test signal through the REAL PyTorch model and serves the output."""
-    log_msg("Running GPU inference on random noise sample...")
+    log_msg("Running GPU inference on noisy test signal...")
     
     os.makedirs('outputs', exist_ok=True)
     out_filename = f"model_output_{int(time.time())}.wav"
@@ -926,9 +926,20 @@ def run_inference():
     try:
         noise_engine.eval() # Set to evaluation mode
         with torch.no_grad():
-            # Create 3 seconds of static noise
             sample_rate = 16000
-            noisy_signal = torch.randn(1, 1, sample_rate * 3).to(device)
+            duration = 3
+            
+            # Generate a 3-second C-Major chord as our test target
+            t = torch.linspace(0, duration, sample_rate * duration)
+            clean_signal = (torch.sin(2 * math.pi * 261.63 * t) + 
+                            torch.sin(2 * math.pi * 329.63 * t) + 
+                            torch.sin(2 * math.pi * 392.00 * t)) / 3.0
+                            
+            clean_signal = clean_signal.unsqueeze(0).unsqueeze(0).to(device)
+            
+            # Corrupt the chord with heavy static noise
+            noise = torch.randn_like(clean_signal) * 0.8
+            noisy_signal = clean_signal + noise
             
             # Run through our trained Engine
             cleaned_signal = noise_engine(noisy_signal)
