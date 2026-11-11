@@ -247,9 +247,27 @@ HTML_TEMPLATE = """
                 <h2 class="text-xl font-bold mb-4">Add Audio Stream</h2>
                 <p class="text-sm text-gray-400 mb-4">Paste URLs from YouTube, Internet Radio, or Audio Datasets. The background thread will pull the streams while the model trains simultaneously.</p>
                 
-                <div class="flex space-x-4">
+                <div class="flex space-x-4 mb-8">
                     <input type="text" id="stream-url" placeholder="https://example.com/audio-stream" class="flex-1 bg-gray-900 border border-gray-600 rounded px-4 py-2 text-white focus:outline-none focus:border-blue-500">
                     <button onclick="addStream()" class="bg-green-600 hover:bg-green-500 px-6 py-2 rounded font-bold transition">Queue Audio</button>
+                </div>
+
+                <div class="border-t border-gray-700 pt-6">
+                    <h2 class="text-xl font-bold mb-4">Upload Local Audio Folder</h2>
+                    <p class="text-sm text-gray-400 mb-4">Select a folder on your computer to batch-upload local audio files directly to the training queue.</p>
+                    
+                    <div class="flex space-x-4 items-center">
+                        <input type="file" id="folder-upload" webkitdirectory directory multiple class="block w-full text-sm text-gray-400
+                            file:mr-4 file:py-2 file:px-4
+                            file:rounded file:border-0
+                            file:text-sm file:font-semibold
+                            file:bg-gray-700 file:text-white
+                            hover:file:bg-gray-600 focus:outline-none cursor-pointer
+                        "/>
+                        <button onclick="uploadFolder(event)" class="bg-blue-600 hover:bg-blue-500 px-6 py-2 rounded font-bold transition whitespace-nowrap">
+                            Upload Folder
+                        </button>
+                    </div>
                 </div>
             </div>
         </div>
@@ -354,6 +372,53 @@ HTML_TEMPLATE = """
             urlInput.value = '';
             // Auto switch back to dashboard to see logs
             switchTab('dashboard');
+        }
+
+        // Upload Folder logic
+        async function uploadFolder(event) {
+            const fileInput = document.getElementById('folder-upload');
+            if (!fileInput.files.length) {
+                alert("Please select a folder first.");
+                return;
+            }
+            
+            const btn = event.target;
+            const originalText = btn.innerText;
+            btn.innerText = "Uploading...";
+            btn.classList.add('opacity-50', 'cursor-not-allowed');
+            
+            const formData = new FormData();
+            let added = 0;
+            
+            for (const file of fileInput.files) {
+                // Basic check to ensure it's an audio file
+                if (file.type.startsWith('audio/') || file.name.match(/\.(wav|mp3|flac|ogg|m4a)$/i)) {
+                    formData.append('files', file);
+                    added++;
+                }
+            }
+            
+            if (added === 0) {
+                alert("No valid audio files found in the selected folder.");
+                btn.innerText = originalText;
+                btn.classList.remove('opacity-50', 'cursor-not-allowed');
+                return;
+            }
+
+            try {
+                await fetch('/api/upload_audio', {
+                    method: 'POST',
+                    body: formData
+                });
+                fileInput.value = ''; // clear input
+                switchTab('dashboard'); // switch to see logs
+            } catch (err) {
+                console.error("Upload failed:", err);
+                alert("Upload failed. Check console.");
+            } finally {
+                btn.innerText = originalText;
+                btn.classList.remove('opacity-50', 'cursor-not-allowed');
+            }
         }
 
         // Toggle Training Engine
@@ -517,6 +582,33 @@ def add_stream():
         log_msg(f"Added URL to streaming queue: {url}")
         return jsonify({"status": "queued"})
     return jsonify({"status": "error", "message": "No URL provided"}), 400
+
+@app.route('/api/upload_audio', methods=['POST'])
+def upload_audio():
+    """Handles bulk folder uploads from the user's local machine."""
+    if 'files' not in request.files:
+        return jsonify({"status": "error", "message": "No files part"}), 400
+    
+    files = request.files.getlist('files')
+    if not os.path.exists('downloads'):
+        os.makedirs('downloads')
+        
+    saved_count = 0
+    for file in files:
+        if file.filename:
+            # Flatten folder structure, just keep filename
+            filename = os.path.basename(file.filename) 
+            filepath = os.path.join('downloads', filename)
+            file.save(filepath)
+            
+            # Add to training queue immediately
+            training_queue.put(filepath)
+            saved_count += 1
+            
+    state["files_ready"] = training_queue.qsize()
+    log_msg(f"Successfully uploaded and queued {saved_count} audio files from local folder.")
+    
+    return jsonify({"status": "success", "count": saved_count})
 
 @app.route('/api/toggle_training', methods=['POST'])
 def toggle_training():
