@@ -207,7 +207,7 @@ HTML_TEMPLATE = """
 
         <!-- TAB: Dashboard -->
         <div id="content-dashboard" class="tab-content active">
-            <div class="grid grid-cols-1 md:grid-cols-4 gap-6 mb-6">
+            <div class="grid grid-cols-1 md:grid-cols-5 gap-6 mb-6">
                 <div class="bg-gray-800 p-4 rounded-lg shadow-lg border border-gray-700">
                     <h3 class="text-gray-400 text-xs uppercase tracking-wider mb-1">Training Queue</h3>
                     <p class="text-3xl font-bold text-white" id="stat-queue">0</p>
@@ -227,6 +227,13 @@ HTML_TEMPLATE = """
                     <button onclick="downloadWeights()" class="w-full py-3 bg-purple-600 hover:bg-purple-500 text-white font-bold rounded shadow transition flex items-center justify-center space-x-2">
                         <span>Download Weights</span>
                         <span class="text-xs bg-purple-800 px-2 py-1 rounded">.ZIP</span>
+                    </button>
+                </div>
+                
+                <!-- NEW: Shortcut to the upload section -->
+                <div class="bg-gray-800 p-4 rounded-lg shadow-lg border border-gray-700 flex flex-col justify-center">
+                    <button onclick="switchTab('downloader')" class="w-full py-3 bg-gray-600 hover:bg-gray-500 text-white font-bold rounded shadow transition flex items-center justify-center space-x-2">
+                        <span>📁 Upload Local Audio</span>
                     </button>
                 </div>
             </div>
