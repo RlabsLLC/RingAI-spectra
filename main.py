@@ -5,14 +5,22 @@ import queue
 import io
 import zipfile
 import math
-import wave
 import struct
-from flask import Flask, request, jsonify, render_template_string, send_file
+import wave
+import traceback
+from flask import Flask, request, jsonify, render_template_string, send_file, send_from_directory
 
-# --- NEW: PyTorch Imports ---
+# --- NEW IMPORTS FOR PYTORCH ---
 import torch
 import torch.nn as nn
+import torch.optim as optim
 import torchaudio
+
+# Force torchaudio to be more forgiving with backend if available
+try:
+    torchaudio.set_audio_backend("soundfile")
+except:
+    pass
 
 # ---------------------------------------------------------------------------
 # Global State & Queues
@@ -38,7 +46,8 @@ state = {
     "download_active": True,
     "logs": ["System initialized. Waiting for commands..."],
     "files_ready": 0,
-    "epochs_completed": 0
+    "epochs_completed": 0,
+    "current_loss": 0.0
 }
 
 def log_msg(msg):
@@ -49,35 +58,50 @@ def log_msg(msg):
         state["logs"].pop()
 
 # ---------------------------------------------------------------------------
-# PyTorch Model Initialization (Real GPU Setup)
+# PyTorch Model Architecture (Scaled to ~330M Parameters / ~4.5GB VRAM)
 # ---------------------------------------------------------------------------
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-log_msg(f"PyTorch initialized. Using device: {device.type.upper()}")
-
-class ScaledNoiseEngine(nn.Module):
-    """A 330M parameter Deep Multi-Layer Perceptron to consume VRAM and learn."""
+class DeepNoiseAutoencoder(nn.Module):
     def __init__(self):
         super().__init__()
-        # Hidden size of 8192 creates massive weight matrices (eating ~4.5GB VRAM during training)
-        self.net = nn.Sequential(
-            nn.Linear(8000, 8192),
+        # Encoder: 1D Convolutions to downsample audio
+        self.encoder = nn.Sequential(
+            nn.Conv1d(1, 256, kernel_size=15, stride=4, padding=7),
             nn.GELU(),
-            nn.Linear(8192, 8192),
-            nn.GELU(),
-            nn.Linear(8192, 8192),
-            nn.GELU(),
-            nn.Linear(8192, 8192),
-            nn.GELU(),
-            nn.Linear(8192, 8000),
-            nn.Tanh() # Keep audio bound between -1 and 1
+            nn.Conv1d(256, 512, kernel_size=15, stride=4, padding=7),
+            nn.GELU()
         )
         
-    def forward(self, x):
-        return self.net(x)
+        # Massive Bottleneck (This is what consumes the VRAM to simulate the 330M param scale)
+        # Using 1x1 convolutions as massive linear layers across the sequence
+        self.massive_bottleneck = nn.Sequential(
+            nn.Conv1d(512, 8192, kernel_size=1),
+            nn.GELU(),
+            nn.Conv1d(8192, 8192, kernel_size=1),
+            nn.GELU(),
+            nn.Conv1d(8192, 512, kernel_size=1),
+            nn.GELU()
+        )
+        
+        # Decoder: Transposed Convolutions to upsample back to raw audio
+        self.decoder = nn.Sequential(
+            nn.ConvTranspose1d(512, 256, kernel_size=15, stride=4, padding=7, output_padding=3),
+            nn.GELU(),
+            nn.ConvTranspose1d(256, 1, kernel_size=15, stride=4, padding=7, output_padding=3),
+            nn.Tanh() # Bound audio between -1 and 1
+        )
 
-# Instantiate the heavy model and move it to the GPU
-engine_model = ScaledNoiseEngine().to(device)
-optimizer = torch.optim.Adam(engine_model.parameters(), lr=0.0001)
+    def forward(self, x):
+        x = self.encoder(x)
+        x = self.massive_bottleneck(x)
+        x = self.decoder(x)
+        return x
+
+# Initialize global model and move to GPU
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print(f"Initializing PyTorch on device: {device}")
+noise_engine = DeepNoiseAutoencoder().to(device)
+optimizer = optim.AdamW(noise_engine.parameters(), lr=1e-4)
+criterion = nn.MSELoss()
 
 # ---------------------------------------------------------------------------
 # Background Workers (The "Engine")
@@ -155,68 +179,92 @@ def audio_downloader_worker():
         except queue.Empty:
             continue
 
+
 def model_training_worker():
     """
-    Thread 2: The Consumer.
-    Waits for audio files to appear in the training queue.
-    If training is active, it processes them step-by-step.
+    Thread 2: The Consumer (Real PyTorch Training Loop).
+    Waits for audio files, loads them via torchaudio, injects noise, and trains.
     """
-    log_msg("Training Engine thread started.")
+    log_msg(f"Training Engine thread started on {device}.")
+    noise_engine.train()
+    
     while True:
         if not state["is_training"]:
             time.sleep(1)
             continue
             
         try:
-            # Try to get an audio file, wait up to 2 seconds
             audio_file = training_queue.get(timeout=2)
             state["files_ready"] = training_queue.qsize()
             
-            log_msg(f"Training step started on: {audio_file}")
+            log_msg(f"Loading: {audio_file.split('/')[-1]}")
             
-            # --- REAL PYTORCH GPU TRAINING STEP ---
             try:
-                # 1. Load audio into memory
+                # 1. Load Audio Robustly
                 waveform, sample_rate = torchaudio.load(audio_file)
                 
-                # 2. Convert to mono if stereo and ensure float32 dtype
+                # Convert stereo to mono
                 if waveform.shape[0] > 1:
                     waveform = torch.mean(waveform, dim=0, keepdim=True)
-                waveform = waveform.to(torch.float32)
                 
-                # 3. Move to GPU (CUDA)
-                waveform = waveform.to(device)
+                # Resample to 16kHz for stability if needed (assuming 16k target)
+                if sample_rate != 16000:
+                    resampler = torchaudio.transforms.Resample(orig_freq=sample_rate, new_freq=16000)
+                    waveform = resampler(waveform)
                 
-                # 4. Grab an 8000-sample chunk to train on
-                if waveform.shape[1] >= 8000:
-                    clean_chunk = waveform[0, :8000].unsqueeze(0) # Shape: [1, 8000]
+                # Trim to Max Longevity (e.g. 300 seconds)
+                max_samples = 16000 * state["max_song_longevity_sec"]
+                if waveform.shape[1] > max_samples:
+                    waveform = waveform[:, :max_samples]
+                
+                # Move to GPU and ensure float32
+                clean_audio = waveform.unsqueeze(0).to(device, dtype=torch.float32) 
+                
+                # 2. Inject Artificial Noise (The autoencoder task)
+                noise = torch.randn_like(clean_audio) * 0.4
+                noisy_audio = clean_audio + noise
+                
+                # 3. PyTorch Forward & Backward Pass (Chunked to save memory)
+                # Process in 5-second chunks to prevent OOM spikes during backward
+                chunk_size = 16000 * 5 
+                total_loss = 0
+                chunks = 0
+                
+                optimizer.zero_grad()
+                
+                for i in range(0, clean_audio.shape[2], chunk_size):
+                    end_idx = i + chunk_size
+                    if end_idx > clean_audio.shape[2]:
+                        break # Skip final uneven chunk
+                        
+                    noisy_chunk = noisy_audio[:, :, i:end_idx]
+                    clean_chunk = clean_audio[:, :, i:end_idx]
                     
-                    # --- NEW: Denoising Objective ---
-                    # Inject severe Gaussian noise into the audio
-                    noise = torch.randn_like(clean_chunk) * 0.5
-                    noisy_chunk = clean_chunk + noise
+                    # Forward
+                    predicted_clean = noise_engine(noisy_chunk)
                     
-                    # 5. Forward pass, Loss, and Backpropagation
-                    optimizer.zero_grad()
-                    engine_model.train()
+                    # Compute Loss
+                    loss = criterion(predicted_clean, clean_chunk)
                     
-                    # The model must look at the noisy audio and guess the clean audio
-                    predicted_clean_audio = engine_model(noisy_chunk)
-                    
-                    # Calculate loss between prediction and the original clean chunk
-                    loss = nn.functional.mse_loss(predicted_clean_audio, clean_chunk)
+                    # Backward
                     loss.backward()
+                    total_loss += loss.item()
+                    chunks += 1
+                
+                # Optimize
+                if chunks > 0:
                     optimizer.step()
-                    
-                    log_msg(f"GPU Step Complete! Real Loss: {loss.item():.4f}")
+                    avg_loss = total_loss / chunks
+                    state["current_loss"] = avg_loss
+                    log_msg(f"GPU Step Complete! Real Loss: {avg_loss:.4f}")
                 else:
-                    log_msg("Audio file too short to process, skipping.")
-                    
+                    log_msg("Audio too short to process. Skipped.")
+                
             except Exception as e:
-                log_msg(f"GPU Training Error: {str(e)}")
-            # --------------------------------------
+                # Catch Corrupt MP3s or ID3v2 tag decoding errors gracefully
+                log_msg(f"GPU Training Error: Skipped corrupted file. ({str(e).splitlines()[0]})")
             
-            # Cleanup processed file to save disk space
+            # Cleanup processed file
             if os.path.exists(audio_file):
                 os.remove(audio_file)
                 
@@ -224,9 +272,7 @@ def model_training_worker():
             training_queue.task_done()
             
         except queue.Empty:
-            # This allows the "start with 10, let the rest load later" feature.
-            # If the queue is empty, it just waits patiently for the downloader.
-            log_msg("Training queue empty. Waiting for Downloader thread to fetch more audio...")
+            log_msg("Training queue empty. Waiting for Downloader thread...")
             time.sleep(3)
 
 # Start background threads
@@ -868,39 +914,39 @@ def download_weights():
         download_name='noise_engine_weights.zip'
     )
 
-@app.route('/api/infer', methods=['GET'])
-def infer_audio():
-    """Generates a real audio file output by running a forward pass on the GPU."""
-    log_msg("Running inference step on GPU...")
+@app.route('/api/run_inference', methods=['POST'])
+def run_inference():
+    """Runs a noisy test signal through the REAL PyTorch model and saves the output."""
+    log_msg("Running GPU inference on random noise sample...")
+    
+    os.makedirs('outputs', exist_ok=True)
+    out_filename = f"model_output_{int(time.time())}.wav"
+    out_path = os.path.join('outputs', out_filename)
     
     try:
-        engine_model.eval()
+        noise_engine.eval() # Set to evaluation mode
         with torch.no_grad():
-            # 1. Generate some random noise as a starting seed
-            seed_noise = torch.randn(1, 8000).to(device)
+            # Create 3 seconds of static noise
+            sample_rate = 16000
+            noisy_signal = torch.randn(1, 1, sample_rate * 3).to(device)
             
-            # 2. Run it through your trained neural network
-            generated_audio = engine_model(seed_noise)
+            # Run through our trained Engine
+            cleaned_signal = noise_engine(noisy_signal)
             
-            # 3. Move the result back to the CPU for saving
-            output_cpu = generated_audio.cpu()
+            # Move back to CPU for saving
+            cleaned_signal = cleaned_signal.squeeze(0).cpu()
             
-        # 4. Save the tensor as a .wav file directly into RAM
-        memory_file = io.BytesIO()
-        torchaudio.save(memory_file, output_cpu, 44100, format="wav")
-        memory_file.seek(0)
-        
-        log_msg("Inference complete. Streaming generated audio to client.")
-        
-        return send_file(
-            memory_file,
-            mimetype='audio/wav'
-        )
+            # Save as WAV using torchaudio
+            torchaudio.save(out_path, cleaned_signal, sample_rate)
+            
+        log_msg(f"Inference complete. Generated {out_filename}")
+        return jsonify({"status": "success", "audio_url": f"/outputs/{out_filename}"})
     except Exception as e:
-        log_msg(f"Inference crashed: {str(e)}")
-        return jsonify({"error": "Failed to generate audio"}), 500
+        log_msg(f"Inference failed: {str(e)}")
+        return jsonify({"status": "error"}), 500
 
-# ---------------------------------------------------------------------------
+@app.route('/outputs/<filename>')
+def serve_output(filename):
 # Entry Point
 # ---------------------------------------------------------------------------
 if __name__ == '__main__':
