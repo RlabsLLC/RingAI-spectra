@@ -32,6 +32,7 @@ app.config['MAX_CONTENT_LENGTH'] = 5 * 1024 * 1024 * 1024 # Allow up to 5GB batc
 # stream_queue holds URLs to be downloaded.
 # training_queue holds paths to downloaded audio files ready for training.
 stream_queue = queue.Queue()
+hf_dataset_queue = queue.Queue()
 training_queue = queue.Queue()
 
 # Global state dictionary for the web UI to poll
@@ -106,6 +107,66 @@ criterion = nn.MSELoss()
 # ---------------------------------------------------------------------------
 # Background Workers (The "Engine")
 # ---------------------------------------------------------------------------
+
+def hf_dataset_loader_worker():
+    """
+    Thread: Hugging Face Dataset Downloader.
+    Streams audio files directly from HF datasets and queues them for training.
+    """
+    log_msg("Hugging Face dataset loader thread started.")
+    
+    if not os.path.exists('downloads'):
+        os.makedirs('downloads')
+        
+    while True:
+        try:
+            config = hf_dataset_queue.get(timeout=2)
+            dataset_id = config.get("dataset_id")
+            split = config.get("split", "train")
+            audio_column = config.get("audio_column", "audio")
+            
+            log_msg(f"Connecting to Hugging Face dataset: {dataset_id} (split: {split})...")
+            
+            try:
+                from datasets import load_dataset
+                # Stream dataset so we don't need to download massive multi-gigabyte datasets all at once
+                dataset = load_dataset(dataset_id, split=split, streaming=True)
+                
+                count = 0
+                for item in dataset:
+                    if audio_column not in item or item[audio_column] is None:
+                        continue
+                        
+                    audio_data = item[audio_column]
+                    out_filename = f"downloads/hf_{dataset_id.replace('/', '_')}_{count}.wav"
+                    
+                    if isinstance(audio_data, dict) and "array" in audio_data:
+                        # Standard HF Audio feature dictionary
+                        array = torch.tensor(audio_data["array"], dtype=torch.float32).unsqueeze(0)
+                        sr = audio_data.get("sampling_rate", 16000)
+                        torchaudio.save(out_filename, array, sr)
+                    elif isinstance(audio_data, dict) and "path" in audio_data and os.path.exists(audio_data["path"]):
+                        # Path reference
+                        waveform, sr = torchaudio.load(audio_data["path"])
+                        torchaudio.save(out_filename, waveform, sr)
+                    else:
+                        continue
+                        
+                    training_queue.put(out_filename)
+                    state["files_ready"] = training_queue.qsize()
+                    count += 1
+                    
+                    if count % 5 == 0:
+                        log_msg(f"Buffered {count} samples from HF Dataset ({dataset_id})...")
+                        
+                log_msg(f"Finished loading dataset {dataset_id}. Enqueued {count} tracks.")
+                
+            except Exception as e:
+                log_msg(f"HF Dataset Error ({dataset_id}): {str(e)}")
+                
+            hf_dataset_queue.task_done()
+        except queue.Empty:
+            continue
 
 def audio_downloader_worker():
     """
@@ -276,6 +337,7 @@ def model_training_worker():
             time.sleep(3)
 
 # Start background threads
+threading.Thread(target=hf_dataset_loader_worker, daemon=True).start()
 threading.Thread(target=audio_downloader_worker, daemon=True).start()
 threading.Thread(target=model_training_worker, daemon=True).start()
 
@@ -401,6 +463,32 @@ HTML_TEMPLATE = """
                     <button onclick="addStream()" class="bg-emerald-600 hover:bg-emerald-500 px-6 py-2 rounded-lg font-bold transition flex items-center">
                         <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path></svg>
                         Queue
+                    </button>
+                </div>
+            </div>
+
+            <div class="bg-gray-900 p-6 rounded-xl border border-gray-800 shadow-sm mb-6">
+                <h3 class="text-lg font-semibold mb-2">Import Hugging Face Dataset</h3>
+                <p class="text-sm text-gray-400 mb-4">Stream an audio dataset directly from Hugging Face (e.g. <code>librispeech_asr</code>, <code>common_voice</code>).</p>
+                
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
+                    <div class="md:col-span-2">
+                        <label class="block text-xs font-medium text-gray-400 mb-1">Dataset Path / ID</label>
+                        <input type="text" id="hf-ds-id" placeholder="e.g. librispeech_asr or username/dataset" class="w-full bg-gray-950 border border-gray-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-purple-500">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-medium text-gray-400 mb-1">Split</label>
+                        <input type="text" id="hf-ds-split" value="train" class="w-full bg-gray-950 border border-gray-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-purple-500">
+                    </div>
+                </div>
+                <div class="flex justify-between items-center">
+                    <div class="w-1/2">
+                        <label class="block text-xs font-medium text-gray-400 mb-1">Audio Column Name</label>
+                        <input type="text" id="hf-ds-col" value="audio" class="w-full bg-gray-950 border border-gray-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-purple-500">
+                    </div>
+                    <button onclick="importHfDataset()" class="mt-5 bg-purple-600 hover:bg-purple-500 px-6 py-2 rounded-lg font-bold transition flex items-center">
+                        <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
+                        Import HF Dataset
                     </button>
                 </div>
             </div>
@@ -563,6 +651,35 @@ HTML_TEMPLATE = """
                 switchTab('dashboard');
             } catch (e) {
                 showToast("Failed to add stream.", "error");
+            }
+        }
+
+        // Import Hugging Face Dataset logic
+        async function importHfDataset() {
+            const dsId = document.getElementById('hf-ds-id').value.trim();
+            const split = document.getElementById('hf-ds-split').value.trim() || 'train';
+            const audioCol = document.getElementById('hf-ds-col').value.trim() || 'audio';
+            
+            if (!dsId) {
+                showToast("Please enter a Hugging Face Dataset ID.", "error");
+                return;
+            }
+            
+            try {
+                await fetch('/api/import_hf_dataset', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        dataset_id: dsId,
+                        split: split,
+                        audio_column: audioCol
+                    })
+                });
+                showToast(`Started streaming HF Dataset (${dsId})`, "success");
+                document.getElementById('hf-ds-id').value = '';
+                switchTab('dashboard');
+            } catch (e) {
+                showToast("Failed to start HF dataset import.", "error");
             }
         }
 
@@ -838,6 +955,17 @@ def add_stream():
         return jsonify({"status": "queued"})
     return jsonify({"status": "error", "message": "No URL provided"}), 400
 
+@app.route('/api/import_hf_dataset', methods=['POST'])
+def import_hf_dataset():
+    """Queues a Hugging Face dataset to stream audio into training."""
+    data = request.json
+    dataset_id = data.get('dataset_id', '')
+    if dataset_id:
+        hf_dataset_queue.put(data)
+        log_msg(f"Queued HF Dataset import: {dataset_id}")
+        return jsonify({"status": "queued"})
+    return jsonify({"status": "error", "message": "No dataset specified"}), 400
+
 @app.route('/api/upload_audio', methods=['POST'])
 def upload_audio():
     """Handles bulk folder uploads from the user's local machine."""
@@ -937,7 +1065,10 @@ def download_weights():
 def run_inference():
     """Runs a noisy test signal through the REAL PyTorch model and serves the output."""
     track_type = request.args.get('type', 'short')
-    duration_str = "10s Full Track" if track_type == 'full' else "3s Test Pass"
+    
+    # Use full model sequence length (max_song_longevity_sec) if full track requested
+    duration = state["max_song_longevity_sec"] if track_type == 'full' else 3
+    duration_str = f"{duration}s Full Track" if track_type == 'full' else "3s Test Pass"
     log_msg(f"Running GPU inference ({duration_str})...")
     
     os.makedirs('outputs', exist_ok=True)
@@ -948,16 +1079,15 @@ def run_inference():
         noise_engine.eval() # Set to evaluation mode
         with torch.no_grad():
             sample_rate = 16000
-            duration = 10 if track_type == 'full' else 3
             
-            # Generate target signal
+            # Generate target signal matching requested duration
             t = torch.linspace(0, duration, sample_rate * duration)
             
             if track_type == 'full':
-                # Dynamically evolving chord for a longer track
-                f1 = 261.63 + 30 * torch.sin(2 * math.pi * 0.2 * t)
-                f2 = 329.63 + 30 * torch.sin(2 * math.pi * 0.2 * t)
-                f3 = 392.00 + 30 * torch.sin(2 * math.pi * 0.2 * t)
+                # Dynamically evolving chord for the full sequence duration
+                f1 = 261.63 + 30 * torch.sin(2 * math.pi * 0.05 * t)
+                f2 = 329.63 + 30 * torch.sin(2 * math.pi * 0.05 * t)
+                f3 = 392.00 + 30 * torch.sin(2 * math.pi * 0.05 * t)
                 clean_signal = (torch.sin(2 * math.pi * f1 * t) + 
                                 torch.sin(2 * math.pi * f2 * t) + 
                                 torch.sin(2 * math.pi * f3 * t)) / 3.0
