@@ -4,7 +4,10 @@ import threading
 import queue
 import io
 import zipfile
-from flask import Flask, request, jsonify, render_template_string, send_file
+import math
+import struct
+import wave
+from flask import Flask, request, jsonify, render_template_string, send_file, send_from_directory
 
 # ---------------------------------------------------------------------------
 # Global State & Queues
@@ -55,7 +58,7 @@ def audio_downloader_worker():
     ydl_opts = {
         'format': 'bestaudio/best',
         'outtmpl': 'downloads/%(id)s.%(ext)s',
-        'noplaylist': True,
+        'noplaylist': False, # FIXED: Allow playlists to be downloaded
         'quiet': True,
         'extract_audio': True,
     }
@@ -72,23 +75,29 @@ def audio_downloader_worker():
             log_msg(f"Fetching audio stream from: {url}")
             
             try:
-                # In a real environment, you would use yt-dlp here:
-                # import yt_dlp
-                # with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                #     info = ydl.extract_info(url, download=True)
-                #     filepath = ydl.prepare_filename(info)
+                # In a real environment, you would use yt-dlp here.
+                # SIMULATION: Check if the user passed a playlist URL
+                is_playlist = "list=" in url or "playlist" in url.lower()
                 
-                # SIMULATION for demonstration without requiring ffmpeg/network delays:
-                time.sleep(3) # Simulate download time
-                filepath = f"downloads/simulated_audio_{int(time.time())}.wav"
-                with open(filepath, 'w') as f:
-                    f.write("dummy audio data")
-                
-                log_msg(f"Successfully buffered audio: {filepath}")
-                
-                # Send to the training thread!
-                training_queue.put(filepath)
-                state["files_ready"] = training_queue.qsize()
+                if is_playlist:
+                    log_msg("Playlist detected. Extracting multiple tracks...")
+                    # Simulate extracting 3 tracks from a playlist
+                    for i in range(1, 4):
+                        time.sleep(1.5)
+                        filepath = f"downloads/sim_track_{int(time.time())}_{i}.wav"
+                        with open(filepath, 'w') as f:
+                            f.write("dummy audio data")
+                        log_msg(f"Buffered playlist track {i}: {filepath}")
+                        training_queue.put(filepath)
+                        state["files_ready"] = training_queue.qsize()
+                else:
+                    time.sleep(3) # Simulate download time
+                    filepath = f"downloads/sim_audio_{int(time.time())}.wav"
+                    with open(filepath, 'w') as f:
+                        f.write("dummy audio data")
+                    log_msg(f"Successfully buffered audio: {filepath}")
+                    training_queue.put(filepath)
+                    state["files_ready"] = training_queue.qsize()
                 
             except Exception as e:
                 log_msg(f"Error fetching {url}: {str(e)}")
@@ -183,6 +192,7 @@ HTML_TEMPLATE = """
             <button onclick="switchTab('dashboard')" id="tab-dashboard" class="tab-btn active pb-2 text-gray-400 hover:text-white font-medium transition">Dashboard</button>
             <button onclick="switchTab('downloader')" id="tab-downloader" class="tab-btn pb-2 text-gray-400 hover:text-white font-medium transition">Stream / Downloader</button>
             <button onclick="switchTab('config')" id="tab-config" class="tab-btn pb-2 text-gray-400 hover:text-white font-medium transition">Model Parameters</button>
+            <button onclick="switchTab('inference')" id="tab-inference" class="tab-btn pb-2 text-gray-400 hover:text-white font-medium transition">Inference / Test</button>
         </div>
 
         <!-- TAB: Dashboard -->
@@ -287,6 +297,23 @@ HTML_TEMPLATE = """
             </div>
         </div>
 
+        <!-- TAB: Inference -->
+        <div id="content-inference" class="tab-content">
+            <div class="bg-gray-800 p-6 rounded-lg shadow-lg border border-gray-700">
+                <h2 class="text-xl font-bold mb-4">Run Trained Model</h2>
+                <p class="text-sm text-gray-400 mb-4">Pass a noisy audio sample through the current state of your Engine to generate a cleaned output.</p>
+                
+                <button onclick="runInference()" id="btn-run-infer" class="bg-purple-600 hover:bg-purple-500 px-6 py-3 rounded font-bold transition w-full md:w-auto">
+                    Generate Output Audio
+                </button>
+
+                <div id="audio-result-container" class="mt-8 hidden p-4 bg-gray-900 border border-gray-600 rounded">
+                    <h3 class="text-sm text-gray-400 mb-3 font-mono">Engine Output (Cleaned Audio)</h3>
+                    <audio id="output-audio-player" controls class="w-full rounded focus:outline-none"></audio>
+                </div>
+            </div>
+        </div>
+
     </div>
 
     <script>
@@ -323,6 +350,30 @@ HTML_TEMPLATE = """
         // Download Weights ZIP
         function downloadWeights() {
             window.location.href = '/api/download_weights';
+        }
+
+        // Run Inference
+        async function runInference() {
+            const btn = document.getElementById('btn-run-infer');
+            btn.innerText = "Processing Audio...";
+            btn.classList.add('opacity-50', 'cursor-not-allowed');
+            
+            try {
+                const res = await fetch('/api/run_inference', { method: 'POST' });
+                const data = await res.json();
+                
+                if (data.status === "success") {
+                    const player = document.getElementById('output-audio-player');
+                    // Add timestamp to prevent browser caching the audio
+                    player.src = data.audio_url + '?t=' + new Date().getTime();
+                    document.getElementById('audio-result-container').classList.remove('hidden');
+                }
+            } catch (err) {
+                console.error("Inference failed:", err);
+            }
+            
+            btn.innerText = "Generate Output Audio";
+            btn.classList.remove('opacity-50', 'cursor-not-allowed');
         }
 
         // Save Configuration
@@ -500,6 +551,34 @@ def download_weights():
         as_attachment=True,
         download_name='noise_engine_weights.zip'
     )
+
+@app.route('/api/run_inference', methods=['POST'])
+def run_inference():
+    """Simulates running an audio file through the model and generates a test playable .wav file."""
+    log_msg("Running inference using current model parameters...")
+    time.sleep(2) # Simulate processing time
+    
+    os.makedirs('outputs', exist_ok=True)
+    out_filename = f"model_output_{int(time.time())}.wav"
+    out_path = os.path.join('outputs', out_filename)
+    
+    # Generate a real, playable 1-second 440Hz beep so the browser HTML5 audio player works
+    with wave.open(out_path, 'w') as wave_file:
+        wave_file.setnchannels(1)
+        wave_file.setsampwidth(2)
+        wave_file.setframerate(44100)
+        for i in range(44100): # 1 second of audio
+            # math.sin generating a standard A4 tone
+            value = int(32767.0 * math.sin(2.0 * math.pi * 440.0 * i / 44100.0))
+            wave_file.writeframesraw(struct.pack('<h', value))
+            
+    log_msg(f"Inference complete. Generated {out_filename}")
+    return jsonify({"status": "success", "audio_url": f"/outputs/{out_filename}"})
+
+@app.route('/outputs/<filename>')
+def serve_output(filename):
+    """Serves generated audio files to the frontend audio player."""
+    return send_from_directory('outputs', filename)
 
 # ---------------------------------------------------------------------------
 # Entry Point
