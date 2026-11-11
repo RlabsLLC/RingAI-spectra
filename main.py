@@ -115,8 +115,7 @@ def hf_dataset_loader_worker():
     """
     log_msg("Hugging Face dataset loader thread started.")
     
-    if not os.path.exists('downloads'):
-        os.makedirs('downloads')
+    os.makedirs('downloads', exist_ok=True)
         
     while True:
         try:
@@ -201,8 +200,7 @@ def audio_downloader_worker():
     }
     
     # Ensure download directory exists
-    if not os.path.exists('downloads'):
-        os.makedirs('downloads')
+    os.makedirs('downloads', exist_ok=True)
 
     while True:
         try:
@@ -973,8 +971,7 @@ def upload_audio():
     if not files:
         return jsonify({"status": "error", "message": "No files received"}), 400
     
-    if not os.path.exists('downloads'):
-        os.makedirs('downloads')
+    os.makedirs('downloads', exist_ok=True)
         
     saved_count = 0
     for file in files:
