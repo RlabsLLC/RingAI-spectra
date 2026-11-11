@@ -914,9 +914,9 @@ def download_weights():
         download_name='noise_engine_weights.zip'
     )
 
-@app.route('/api/run_inference', methods=['POST'])
+@app.route('/api/infer', methods=['GET'])
 def run_inference():
-    """Runs a noisy test signal through the REAL PyTorch model and saves the output."""
+    """Runs a noisy test signal through the REAL PyTorch model and serves the output."""
     log_msg("Running GPU inference on random noise sample...")
     
     os.makedirs('outputs', exist_ok=True)
@@ -940,13 +940,16 @@ def run_inference():
             torchaudio.save(out_path, cleaned_signal, sample_rate)
             
         log_msg(f"Inference complete. Generated {out_filename}")
-        return jsonify({"status": "success", "audio_url": f"/outputs/{out_filename}"})
+        return send_file(out_path, mimetype="audio/wav")
     except Exception as e:
         log_msg(f"Inference failed: {str(e)}")
         return jsonify({"status": "error"}), 500
 
 @app.route('/outputs/<filename>')
 def serve_output(filename):
+    """Serves the generated output WAV files."""
+    return send_from_directory('outputs', filename)
+
 # Entry Point
 # ---------------------------------------------------------------------------
 if __name__ == '__main__':
