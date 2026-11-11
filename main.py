@@ -54,24 +54,30 @@ def log_msg(msg):
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 log_msg(f"PyTorch initialized. Using device: {device.type.upper()}")
 
-class DummyNoiseEngine(nn.Module):
-    """A tiny baseline model to demonstrate actual GPU training and audio generation."""
+class ScaledNoiseEngine(nn.Module):
+    """A 330M parameter Deep Multi-Layer Perceptron to consume VRAM and learn."""
     def __init__(self):
         super().__init__()
-        # Takes a chunk of 8000 audio samples, processes it, and outputs 8000 samples
+        # Hidden size of 8192 creates massive weight matrices (eating ~4.5GB VRAM during training)
         self.net = nn.Sequential(
-            nn.Linear(8000, 2048),
-            nn.ReLU(),
-            nn.Linear(2048, 8000),
+            nn.Linear(8000, 8192),
+            nn.GELU(),
+            nn.Linear(8192, 8192),
+            nn.GELU(),
+            nn.Linear(8192, 8192),
+            nn.GELU(),
+            nn.Linear(8192, 8192),
+            nn.GELU(),
+            nn.Linear(8192, 8000),
             nn.Tanh() # Keep audio bound between -1 and 1
         )
         
     def forward(self, x):
         return self.net(x)
 
-# Instantiate the model and move it to the GPU
-engine_model = DummyNoiseEngine().to(device)
-optimizer = torch.optim.Adam(engine_model.parameters(), lr=0.001)
+# Instantiate the heavy model and move it to the GPU
+engine_model = ScaledNoiseEngine().to(device)
+optimizer = torch.optim.Adam(engine_model.parameters(), lr=0.0001)
 
 # ---------------------------------------------------------------------------
 # Background Workers (The "Engine")
@@ -173,28 +179,36 @@ def model_training_worker():
                 # 1. Load audio into memory
                 waveform, sample_rate = torchaudio.load(audio_file)
                 
-                # 2. Convert to mono if stereo
+                # 2. Convert to mono if stereo and ensure float32 dtype
                 if waveform.shape[0] > 1:
                     waveform = torch.mean(waveform, dim=0, keepdim=True)
+                waveform = waveform.to(torch.float32)
                 
                 # 3. Move to GPU (CUDA)
                 waveform = waveform.to(device)
                 
                 # 4. Grab an 8000-sample chunk to train on
                 if waveform.shape[1] >= 8000:
-                    chunk = waveform[0, :8000].unsqueeze(0) # Shape: [1, 8000]
+                    clean_chunk = waveform[0, :8000].unsqueeze(0) # Shape: [1, 8000]
+                    
+                    # --- NEW: Denoising Objective ---
+                    # Inject severe Gaussian noise into the audio
+                    noise = torch.randn_like(clean_chunk) * 0.5
+                    noisy_chunk = clean_chunk + noise
                     
                     # 5. Forward pass, Loss, and Backpropagation
                     optimizer.zero_grad()
                     engine_model.train()
-                    predicted_audio = engine_model(chunk)
                     
-                    # Dummy task: Train the model to reconstruct the audio
-                    loss = nn.functional.mse_loss(predicted_audio, chunk)
+                    # The model must look at the noisy audio and guess the clean audio
+                    predicted_clean_audio = engine_model(noisy_chunk)
+                    
+                    # Calculate loss between prediction and the original clean chunk
+                    loss = nn.functional.mse_loss(predicted_clean_audio, clean_chunk)
                     loss.backward()
                     optimizer.step()
                     
-                    log_msg(f"GPU Step Complete! Loss: {loss.item():.4f}")
+                    log_msg(f"GPU Step Complete! Real Loss: {loss.item():.4f}")
                 else:
                     log_msg("Audio file too short to process, skipping.")
                     
